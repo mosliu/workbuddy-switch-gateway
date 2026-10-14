@@ -303,6 +303,45 @@ pub fn import_from_auth_file() -> Option<Value> {
     imported_account_from_root(read_auth_file()?)
 }
 
+/// 读取认证文件中可安全用于匹配账号的公开身份字段。
+///
+/// WorkBuddy 新版会把 nickname / token 等敏感字段写成
+/// `{"$wbEncrypted":1,"envelope":"..."}`。这些字段不能在本地服务中
+/// 当作字符串使用，但 uid 与 domain 仍然是明文，可用于复用账号库里已有的
+/// 记录，避免「本机导入」把一个已存在的账号误报成未登录。
+pub fn auth_identity_for(region: crate::modules::config::Region) -> Option<Value> {
+    auth_identity_from_root(read_auth_file_for(region)?)
+}
+
+fn auth_identity_from_root(root: Value) -> Option<Value> {
+    let account_obj = root
+        .get("account")
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let auth_obj = root
+        .get("auth")
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let uid = get_str(&root, "uid")
+        .or_else(|| get_str(&account_obj, "uid"))
+        .or_else(|| get_str(&account_obj, "id"));
+    let uid = uid?;
+
+    Some(json!({
+        "uid": uid,
+        "nickname": get_str(&root, "nickname")
+            .or_else(|| get_str(&root, "name"))
+            .or_else(|| get_str(&account_obj, "nickname"))
+            .or_else(|| get_str(&account_obj, "label")),
+        "email": get_str(&root, "email")
+            .or_else(|| get_str(&account_obj, "email"))
+            .or_else(|| get_str(&auth_obj, "email")),
+        "domain": get_str(&root, "domain").or_else(|| get_str(&auth_obj, "domain")),
+    }))
+}
+
 fn imported_account_from_root(root: Value) -> Option<Value> {
     let account_obj = root
         .get("account")
@@ -430,5 +469,24 @@ mod tests {
         assert_eq!(account["uid"], "u-1");
         assert_eq!(account["nickname"], "同名用户");
         assert!(account["email"].is_null());
+    }
+
+    #[test]
+    fn auth_identity_ignores_encrypted_display_fields_but_keeps_uid() {
+        let identity = auth_identity_from_root(json!({
+            "account": {
+                "uid": "u-1",
+                "nickname": {"$wbEncrypted": 1, "envelope": "opaque"}
+            },
+            "auth": {
+                "accessToken": {"$wbEncrypted": 1, "envelope": "opaque"},
+                "domain": "www.codebuddy.cn"
+            }
+        }))
+        .expect("明文 uid 应可用于身份匹配");
+
+        assert_eq!(identity["uid"], "u-1");
+        assert!(identity["nickname"].is_null());
+        assert_eq!(identity["domain"], "www.codebuddy.cn");
     }
 }

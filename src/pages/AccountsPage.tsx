@@ -595,7 +595,9 @@ export default function AccountsPage() {
       : undefined;
   const cliCurrentAccountId = codebuddyCli?.activeAccountId;
   const workbuddyCurrentName = current
-    ? current.nickname || current.email || current.uid || "未知账号"
+    ? [current.nickname, current.email, current.uid].find(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      ) || "未知账号"
     : "未登录";
   const codebuddyCurrentName = codebuddyCli?.configured
     ? codebuddyCli.activeAccountName || "未检测到"

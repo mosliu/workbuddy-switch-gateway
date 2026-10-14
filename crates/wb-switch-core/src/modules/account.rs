@@ -79,18 +79,22 @@ pub fn account_meta(acc: &Value) -> Value {
             crate::modules::config::Region::Cn => "cn",
             crate::modules::config::Region::Intl => "intl",
         },
-        "id": acc.get("id"),
-        "uid": acc.get("uid"),
-        "email": acc.get("email"),
-        "nickname": acc.get("nickname"),
-        "enterpriseName": acc.get("enterpriseName"),
-        "expiresAt": acc.get("expiresAt"),
-        "refreshExpiresAt": acc.get("refreshExpiresAt"),
-        "refreshedAt": acc.get("refreshedAt"),
-        "createdAt": acc.get("createdAt"),
+        "id": get_str(acc, "id"),
+        "uid": get_str(acc, "uid"),
+        "email": get_str(acc, "email"),
+        "nickname": get_str(acc, "nickname"),
+        "enterpriseName": get_str(acc, "enterpriseName"),
+        "expiresAt": scalar_i64(acc.get("expiresAt")),
+        "refreshExpiresAt": scalar_i64(acc.get("refreshExpiresAt")),
+        "refreshedAt": scalar_i64(acc.get("refreshedAt")),
+        "createdAt": scalar_i64(acc.get("createdAt")),
         "needsRelogin": acc.get("needs_relogin").and_then(|v| v.as_bool()) == Some(true),
-        "needsReloginReason": acc.get("needs_relogin_reason"),
+        "needsReloginReason": get_str(acc, "needs_relogin_reason"),
     })
+}
+
+fn scalar_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(Value::as_i64)
 }
 
 /// 取非空字符串字段；空/缺失返回 None。
@@ -240,6 +244,23 @@ mod tests {
         assert_eq!(meta["needsReloginReason"], "刷新失败");
         assert!(meta.get("access_token").is_none(), "不得泄露 token");
         assert!(meta.get("refresh_token").is_none(), "不得泄露 token");
+    }
+
+    #[test]
+    fn account_meta_drops_encrypted_objects_from_display_fields() {
+        let meta = account_meta(&json!({
+            "id": "a1",
+            "uid": "u1",
+            "nickname": {"$wbEncrypted": 1, "envelope": "opaque"},
+            "enterpriseName": {"$wbEncrypted": 1, "envelope": "opaque"},
+            "expiresAt": {"$wbEncrypted": 1, "envelope": "opaque"},
+            "needs_relogin_reason": {"$wbEncrypted": 1, "envelope": "opaque"},
+        }));
+
+        assert!(meta["nickname"].is_null());
+        assert!(meta["enterpriseName"].is_null());
+        assert!(meta["expiresAt"].is_null());
+        assert!(meta["needsReloginReason"].is_null());
     }
 
     #[test]
@@ -408,6 +429,7 @@ pub fn import_local_all() -> Result<Vec<Value>, String> {
     let mut notes: Vec<String> = Vec::new();
 
     for region in Region::ALL {
+        let mut region_imported = false;
         match crate::modules::auth_file::import_from_auth_file_for(region) {
             None => notes.push(format!("{}：未发现本机登录", region.label())),
             Some(acc) => {
@@ -420,8 +442,35 @@ pub fn import_local_all() -> Result<Vec<Value>, String> {
                     });
                 }
                 match save_collected_account(acc) {
-                    Ok(saved) => imported.push(account_meta(&saved)),
+                    Ok(saved) => {
+                        imported.push(account_meta(&saved));
+                        region_imported = true;
+                    }
                     Err(e) => notes.push(format!("{}：保存失败 {e}", region.label())),
+                }
+            }
+        }
+
+        // 新版 WorkBuddy 会把认证文件中的 token 包装成加密对象，服务进程
+        // 无法把它还原为明文 token。若账号库已经有同 UID 的完整记录，仍可
+        // 安全地把它作为本次导入结果返回；首次导入则继续给出明确失败原因，
+        // 不把没有 token 的半成品写入账号库。
+        if !region_imported {
+            if let Some(identity) = crate::modules::auth_file::auth_identity_for(region) {
+                let uid = get_str(&identity, "uid");
+                let existing = uid.as_deref().and_then(|uid| {
+                    load_accounts().into_iter().find(|a| {
+                        crate::modules::config::Region::of(a) == region
+                            && get_str(a, "uid").as_deref() == Some(uid)
+                    })
+                });
+                if let Some(existing) = existing {
+                    imported.push(account_meta(&existing));
+                } else if uid.is_some() {
+                    notes.push(format!(
+                        "{}：认证文件中的 token 已加密，无法在当前服务中首次导入",
+                        region.label()
+                    ));
                 }
             }
         }

@@ -1,0 +1,24 @@
+{
+  "iteration": 2,
+  "timestamp": "2026-10-13T00:00:00+08:00",
+  "hypotheses": [
+    {
+      "id": "H1",
+      "description": "新版认证文件把敏感字段包装为 $wbEncrypted/envelope，导入代码仍只接受字符串 token。",
+      "status": "confirmed",
+      "evidence": "本机认证文件的 nickname/accessToken/refreshToken 为加密对象；imported_account_from_root 的 get_str 无法读取。"
+    },
+    {
+      "id": "H2",
+      "description": "状态接口把加密 nickname 对象透传给 React，首页将对象作为 child 渲染。",
+      "status": "confirmed",
+      "evidence": "React #31 args 显示 $wbEncrypted/envelope；原 api_status/build_app_status 直接返回 acct.nickname。"
+    },
+    {
+      "id": "H3",
+      "description": "POST body 或路由参数格式错误是 400 的主要原因。",
+      "status": "rejected",
+      "evidence": "路由不读取 body；修复后的同一空 JSON 请求返回 200。"
+    }
+  ]
+}

@@ -139,9 +139,9 @@ async fn api_status() -> Response {
     let current = auth.as_ref().and_then(|a| {
         let acct = a.get("account").cloned().unwrap_or_else(|| json!({}));
         Some(json!({
-            "uid": acct.get("uid"),
-            "nickname": acct.get("nickname"),
-            "email": acct.get("email"),
+            "uid": account::get_str(&acct, "uid"),
+            "nickname": account::get_str(&acct, "nickname"),
+            "email": account::get_str(&acct, "email"),
         }))
     });
     json_ok(json!({
